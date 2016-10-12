@@ -29,6 +29,8 @@ DESC
   config_param :output_include_tag, :bool, :default => false
   config_param :output_include_time, :bool, :default => false
   config_param :kafka_agg_max_bytes, :size, :default => 4*1024  #4k
+  # see http://kafka.apache.org/documentation.html message.max.bytes
+  config_param :kafka_message_size_max_bytes, :size, :default => 1000012
 
   # ruby-kafka producer options
   config_param :max_send_retries, :integer, :default => 1,
@@ -210,11 +212,17 @@ DESC
         topic = record['topic'.freeze] || def_topic
         partition_key = record['partition_key'.freeze] || @default_partition_key
 
+        record_buf = @formatter_proc.call(tag, time, record)
+        record_buf_bytes = record_buf.bytesize
+
+        if record_buf_bytes > @kafka_message_size_max_bytes
+          log.warn { "Message with tag #{tag} exceeds message size limit with #{record_buf_bytes} bytes" }
+          next
+        end
+
         records_by_topic[topic] ||= 0
         bytes_by_topic[topic] ||= 0
 
-        record_buf = @formatter_proc.call(tag, time, record)
-        record_buf_bytes = record_buf.bytesize
         if (messages > 0) and (messages_bytes + record_buf_bytes > @kafka_agg_max_bytes)
           log.on_trace { log.trace("#{messages} messages send.") }
           producer.deliver_messages
